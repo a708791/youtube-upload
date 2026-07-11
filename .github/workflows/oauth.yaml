@@ -1,4 +1,4 @@
-name: OAuth v15 Test
+name: OAuth v16 Test
 
 on:
   push:
@@ -13,12 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-      CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Test multiline python
+      - name: Test
         run: |
-          python3 -c "
-import json
-print('CLIENT_ID:', '$CLIENT_ID')
-print('MULTILINE works!')
-"
+          echo "Testing Python in YAML"
+          python3 -c 'import json; print("CLIENT_ID:", "'$CLIENT_ID'")'
+          echo "Done"
