@@ -11,105 +11,87 @@ on:
 jobs:
   authorize:
     runs-on: ubuntu-latest
-    outputs:
-      cred_base64: ${{ steps.get_token.outputs.cred_base64 }}
     steps:
-      - name: Generate device code
-        id: get_code
-        run: |
-          python3 << 'PYEOF'
-          import urllib.request, urllib.parse, json, os
-          
-          client_id = '${{ secrets.YOUTUBE_CLIENT_ID }}'
-          
-          data = urllib.parse.urlencode({
-            'client_id': client_id,
-            'scope': 'https://www.googleapis.com/auth/youtube.upload'
-          }).encode()
-          
-          req = urllib.request.Request('https://oauth2.googleapis.com/device/code', data=data)
-          resp = urllib.request.urlopen(req, timeout=30)
-          result = json.loads(resp.read())
-          
-          verification_url = result['verification_url']
-          user_code = result['user_code']
-          device_code = result['device_code']
-          
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write(f'verification_url={verification_url}\n')
-            f.write(f'user_code={user_code}\n')
-            f.write(f'device_code={device_code}\n')
-          
-          print('========================================')
-          print('ACTION REQUIRED - OPEN THIS URL IN BROWSER:')
-          print(verification_url)
-          print('========================================')
-          print('ENTER THIS CODE:', user_code)
-          print('========================================')
-          print('Then come back here - workflow will poll automatically')
-          print('========================================')
-          PYEOF
-
-      - name: Poll for token
-        id: get_token
+      - name: Generate device code and poll
+        id: auth
         env:
           CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
         run: |
-          python3 << 'PYEOF'
-          import urllib.request, urllib.parse, json, os, time
+          # Step 1: Get device code
+          RESPONSE=$(curl -s -X POST https://oauth2.googleapis.com/device/code \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=$CLIENT_ID&scope=https://www.googleapis.com/auth/youtube.upload")
           
-          device_code = '${{ steps.get_code.outputs.device_code }}'
-          client_id = os.environ['CLIENT_ID']
-          client_secret = os.environ['CLIENT_SECRET']
+          DEVICE_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_code',''))")
+          USER_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_code',''))")
+          VERIFY_URL=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verification_url',''))")
           
-          for i in range(60):
-            time.sleep(5)
-            
-            data = urllib.parse.urlencode({
-              'client_id': client_id,
-              'client_secret': client_secret,
-              'code': device_code,
-              'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
-            }).encode()
-            
-            req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)
-            resp = urllib.request.urlopen(req, timeout=30)
-            result = json.loads(resp.read())
-            
-            if 'access_token' in result:
-              access_token = result['access_token']
-              refresh_token = result.get('refresh_token', '')
-              
-              cred = {
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'token_uri': 'https://oauth2.googleapis.com/token',
-                'client_id': client_id,
-                'client_secret': client_secret,
-                'expiry': '2026-07-12T00:00:00Z'
-              }
-              
-              import base64
-              cred_json = json.dumps(cred)
-              cred_base64 = base64.b64encode(cred_json.encode()).decode()
-              
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                f.write(f'cred_base64={cred_base64}\n')
-                f.write('status=success\n')
-              
-              print('========================================')
-              print('AUTHORIZATION SUCCESS!')
-              print('========================================')
-              print('CREDENTIALS_BASE64:', cred_base64)
-              print('========================================')
-              exit(0)
-            
-            error = result.get('error', 'unknown')
-            if error != 'authorization_pending':
-              print(f'Error: {error}')
-              exit(1)
+          echo "verification_url=$VERIFY_URL" >> $GITHUB_OUTPUT
+          echo "user_code=$USER_CODE" >> $GITHUB_OUTPUT
           
-          print('TIMEOUT - authorization not completed')
-          exit(1)
-          PYEOF
+          echo ""
+          echo "========================================"
+          echo "OPEN THIS URL IN YOUR BROWSER:"
+          echo "$VERIFY_URL"
+          echo "========================================"
+          echo "ENTER THIS CODE: $USER_CODE"
+          echo "========================================"
+          echo "CLICK ALLOW, THEN WAIT..."
+          echo "========================================"
+          
+          # Step 2: Poll for token (60 tries, 5 sec each = 5 minutes)
+          for i in $(seq 1 60); do
+            sleep 5
+            
+            TOKEN_RESP=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&code=$DEVICE_CODE&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code")
+            
+            ACCESS_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+            
+            if [ -n "$ACCESS_TOKEN" ]; then
+              REFRESH_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
+              
+              # Build JSON and base64 encode it
+              python3 << PYEOF
+import json, base64, os, sys
+
+cred = {
+  "access_token": '''$ACCESS_TOKEN''',
+  "refresh_token": '''$REFRESH_TOKEN''',
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": '''$CLIENT_ID''',
+  "client_secret": '''$CLIENT_SECRET''',
+  "expiry": "2026-07-12T00:00:00Z"
+}
+
+cred_json = json.dumps(cred)
+cred_b64 = base64.b64encode(cred_json.encode()).decode()
+
+with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    f.write(f'cred_base64={cred_b64}\n')
+    f.write('status=success\n')
+
+print("========================================")
+print("AUTHORIZATION SUCCESS!")
+print("========================================")
+print("CREDENTIALS_BASE64:")
+print(cred_b64)
+print("========================================")
+PYEOF
+              
+              exit 0
+            fi
+            
+            ERROR=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)
+            if [ "$ERROR" != "authorization_pending" ]; then
+              echo "Error: $ERROR"
+              exit 1
+            fi
+            
+            echo "Waiting... ($i/60) - Please authorize at $VERIFY_URL"
+          done
+          
+          echo "TIMEOUT - authorization not completed in 5 minutes"
+          exit 1
