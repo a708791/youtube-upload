@@ -1,4 +1,4 @@
-name: YouTube OAuth Test
+name: YouTube OAuth Authorization
 
 on:
   push:
@@ -15,11 +15,85 @@ jobs:
       CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Test curl to Google
+      - name: Generate device code
+        id: device
         run: |
-          echo "Testing curl to Google OAuth..."
-          echo "CLIENT_ID is set: $CLIENT_ID"
-          curl -v https://oauth2.googleapis.com/device/code \
-            -d "client_id=$CLIENT_ID&scope=https://www.googleapis.com/auth/youtube.upload" \
-            2>&1 | head -30
-          echo "Curl exit code: $?"
+          RESPONSE=$(curl -s -X POST https://oauth2.googleapis.com/device/code \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "client_id=$CLIENT_ID&scope=https://www.googleapis.com/auth/youtube.upload")
+          
+          DEVICE_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_code',''))")
+          USER_CODE=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_code',''))")
+          VERIFY_URL=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verification_url',''))")
+          
+          echo "verification_url=$VERIFY_URL" >> $GITHUB_OUTPUT
+          echo "user_code=$USER_CODE" >> $GITHUB_OUTPUT
+          echo "device_code=$DEVICE_CODE" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "========================================"
+          echo "OPEN THIS URL IN YOUR BROWSER:"
+          echo "$VERIFY_URL"
+          echo "========================================"
+          echo "ENTER THIS CODE: $USER_CODE"
+          echo "========================================"
+          echo "CLICK ALLOW, THEN WAIT..."
+          echo "========================================"
+
+      - name: Poll for token
+        id: poll
+        run: |
+          DEVICE_CODE="${{ steps.device.outputs.device_code }}"
+          echo "Polling for token (device_code: $DEVICE_CODE)..."
+          
+          for i in $(seq 1 60); do
+            sleep 5
+            
+            TOKEN_RESP=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&code=$DEVICE_CODE&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code")
+            
+            ACCESS_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+            
+            if [ -n "$ACCESS_TOKEN" ]; then
+              REFRESH_TOKEN=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
+              
+              echo "Got access token! Building credentials JSON..."
+              
+              cat > /tmp/make_cred.py << 'ENDPY'
+import json, base64, os
+cred = {
+  "access_token": sys.argv[1],
+  "refresh_token": sys.argv[2],
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": sys.argv[3],
+  "client_secret": sys.argv[4],
+  "expiry": "2026-07-12T00:00:00Z"
+}
+cred_json = json.dumps(cred)
+cred_b64 = base64.b64encode(cred_json.encode()).decode()
+with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    f.write('cred_base64=' + cred_b64 + '\n')
+    f.write('status=success\n')
+print("CREDENTIALS_BASE64:", cred_b64)
+ENDPY
+              
+              python3 /tmp/make_cred.py "$ACCESS_TOKEN" "$REFRESH_TOKEN" "$CLIENT_ID" "$CLIENT_SECRET"
+              
+              echo "========================================"
+              echo "AUTHORIZATION SUCCESS!"
+              echo "========================================"
+              exit 0
+            fi
+            
+            ERROR=$(echo "$TOKEN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)
+            if [ "$ERROR" != "authorization_pending" ]; then
+              echo "Error: $ERROR"
+              exit 1
+            fi
+            
+            echo "Waiting ($i/60)..."
+          done
+          
+          echo "TIMEOUT"
+          exit 1
