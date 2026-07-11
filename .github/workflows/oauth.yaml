@@ -61,20 +61,22 @@ jobs:
               echo "=========================================="
               refresh_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
               
-              credentials_json=$(python3 -c "
+              # Write Python script to temp file to avoid escaping issues
+              cat > /tmp/make_cred.py << 'PYEOF'
 import json, sys
 cred = {
-  'access_token': '''$access_token''',
-  'refresh_token': '''$refresh_token''',
-  'token_uri': 'https://oauth2.googleapis.com/token',
-  'client_id': '''$CLIENT_ID''',
-  'client_secret': '''$CLIENT_SECRET''',
-  'expiry': '2026-07-12T00:00:00Z'
+  "access_token": sys.argv[1],
+  "refresh_token": sys.argv[2],
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": sys.argv[3],
+  "client_secret": sys.argv[4],
+  "expiry": "2026-07-12T00:00:00Z"
 }
 print(json.dumps(cred))
-")
+PYEOF
               
-              # Base64 encode for output
+              credentials_json=$(python3 /tmp/make_cred.py "$access_token" "$refresh_token" "$CLIENT_ID" "$CLIENT_SECRET")
+              
               cred_base64=$(echo -n "$credentials_json" | base64 -w0)
               echo "cred_base64=$cred_base64" >> $GITHUB_OUTPUT
               echo "status=success" >> $GITHUB_OUTPUT
@@ -83,8 +85,6 @@ print(json.dumps(cred))
               echo "=========================================="
               echo "CREDENTIALS BASE64:"
               echo "$cred_base64"
-              echo "=========================================="
-              echo "SAVE THIS VALUE AND USE IT TO UPLOAD"
               echo "=========================================="
               exit 0
             fi
