@@ -1,4 +1,4 @@
-name: YouTube OAuth Authorization
+name: YouTube OAuth Test v11
 
 on:
   push:
@@ -15,92 +15,8 @@ jobs:
       CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Get device code and poll
-        id: auth
+      - name: Test
         run: |
-          python3 -c "
-          import urllib.request, urllib.parse, json, base64, os, time
-
-          client_id = '$CLIENT_ID'
-          client_secret = '$CLIENT_SECRET'
-
-          # Step 1: Get device code
-          data = urllib.parse.urlencode({
-            'client_id': client_id,
-            'scope': 'https://www.googleapis.com/auth/youtube.upload'
-          }).encode()
-          req = urllib.request.Request('https://oauth2.googleapis.com/device/code', data=data)
-          resp = urllib.request.urlopen(req, timeout=30)
-          result = json.loads(resp.read())
-
-          device_code = result['device_code']
-          user_code = result['user_code']
-          verification_url = result['verification_url']
-
-          # Output to GITHUB_OUTPUT
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write(f'verification_url={verification_url}\n')
-            f.write(f'user_code={user_code}\n')
-            f.write(f'device_code={device_code}\n')
-
-          print('========================================')
-          print('OPEN THIS URL IN YOUR BROWSER:')
-          print(verification_url)
-          print('========================================')
-          print('ENTER THIS CODE:', user_code)
-          print('========================================')
-          print('CLICK ALLOW, THEN WAIT...')
-          print('========================================')
-
-          # Step 2: Poll for token
-          for i in range(60):
-            time.sleep(5)
-
-            data = urllib.parse.urlencode({
-              'client_id': client_id,
-              'client_secret': client_secret,
-              'code': device_code,
-              'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
-            }).encode()
-
-            req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)
-            resp = urllib.request.urlopen(req, timeout=30)
-            result = json.loads(resp.read())
-
-            if 'access_token' in result:
-              access_token = result['access_token']
-              refresh_token = result.get('refresh_token', '')
-
-              cred = {
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'token_uri': 'https://oauth2.googleapis.com/token',
-                'client_id': client_id,
-                'client_secret': client_secret,
-                'expiry': '2026-07-12T00:00:00Z'
-              }
-
-              cred_json = json.dumps(cred)
-              cred_b64 = base64.b64encode(cred_json.encode()).decode()
-
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                f.write(f'cred_base64={cred_b64}\n')
-                f.write('status=success\n')
-
-              print('========================================')
-              print('AUTHORIZATION SUCCESS!')
-              print('CREDENTIALS_BASE64:')
-              print(cred_b64)
-              print('========================================')
-              exit(0)
-
-            error = result.get('error', 'unknown')
-            if error != 'authorization_pending':
-              print(f'Error: {error}')
-              exit(1)
-
-            print(f'Waiting ({i+1}/60)...')
-
-          print('TIMEOUT')
-          exit(1)
-          "
+          echo "CLIENT_ID is set: $CLIENT_ID"
+          echo "CLIENT_SECRET first 5: ${CLIENT_SECRET:0:5}"
+          python3 -c "print('CLIENT_ID from python:', '$CLIENT_ID')"
