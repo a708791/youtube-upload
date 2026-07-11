@@ -1,4 +1,4 @@
-name: OAuth v19 - Test curl to raw
+name: YouTube OAuth Authorization
 
 on:
   push:
@@ -11,8 +11,10 @@ on:
 jobs:
   authorize:
     runs-on: ubuntu-latest
+    env:
+      CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Test curl
+      - name: Download and run OAuth script
         run: |
-          echo "Testing curl..."
-          curl -v https://raw.githubusercontent.com/a708791/youtube-upload/main/oauth_flow.py 2>&1 | head -20
+          curl -s https://raw.githubusercontent.com/a708791/youtube-upload/main/oauth_flow.py | python3
