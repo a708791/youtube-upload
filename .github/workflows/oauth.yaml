@@ -1,4 +1,4 @@
-name: OAuth v17 - Minimal Test
+name: YouTube OAuth Authorization
 
 on:
   push:
@@ -15,6 +15,8 @@ jobs:
       CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Get device code
+      - name: Download and run OAuth script
         run: |
-          python3 -c 'import urllib.request, urllib.parse, json, os; data = urllib.parse.urlencode({"client_id": "'$CLIENT_ID'", "scope": "https://www.googleapis.com/auth/youtube.upload"}).encode(); req = urllib.request.Request("https://oauth2.googleapis.com/device/code", data=data); resp = urllib.request.urlopen(req, timeout=30); r = json.loads(resp.read()); print("URL:", r["verification_url"]); print("CODE:", r["user_code"]); print("DEVICE:", r["device_code"]); open(os.environ["GITHUB_OUTPUT"], "a").write(f"device_code={r[\"device_code\"]}\nuser_code={r[\"user_code\"]}\nverification_url={r[\"verification_url\"]}\n")'
+          curl -s -o oauth_flow.py https://raw.githubusercontent.com/a708791/youtube-upload/main/oauth_flow.py
+          chmod +x oauth_flow.py
+          python3 oauth_flow.py
