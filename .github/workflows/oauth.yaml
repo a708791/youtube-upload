@@ -1,4 +1,4 @@
-name: YouTube OAuth Authorization
+name: YouTube OAuth Test
 
 on:
   push:
@@ -9,99 +9,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  authorize:
+  test:
     runs-on: ubuntu-latest
-    outputs:
-      cred_base64: ${{ steps.poll.outputs.cred_base64 }}
     steps:
-      - name: Generate device code
-        id: device
-        env:
-          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      - name: Test
         run: |
-          response=$(curl -s -X POST https://oauth2.googleapis.com/device/code \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -d "client_id=$CLIENT_ID&scope=https://www.googleapis.com/auth/youtube.upload")
-          
-          device_code=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_code',''))")
-          user_code=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_code',''))")
-          verification_url=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verification_url',''))")
-          
-          echo "device_code=$device_code" >> $GITHUB_OUTPUT
-          echo "user_code=$user_code" >> $GITHUB_OUTPUT
-          echo "verification_url=$verification_url" >> $GITHUB_OUTPUT
-          
-          echo ""
-          echo "=========================================="
-          echo "VISIT THIS URL IN YOUR BROWSER:"
-          echo "$verification_url"
-          echo "=========================================="
-          echo "ENTER THIS USER CODE:"
-          echo "$user_code"
-          echo "=========================================="
-          echo "CLICK ALLOW"
-          echo "THEN COME BACK - WORKFLOW WILL POLL AUTOMATICALLY"
-          echo "=========================================="
-
-      - name: Poll for token
-        id: poll
-        env:
-          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-        run: |
-          device_code="${{ steps.device.outputs.device_code }}"
-          
-          for i in $(seq 1 60); do
-            sleep 5
-            
-            response=$(curl -s -X POST https://oauth2.googleapis.com/token \
-              -H "Content-Type: application/x-www-form-urlencoded" \
-              -d "client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&code=$device_code&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code")
-            
-            access_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
-            
-            if [ -n "$access_token" ]; then
-              echo ""
-              echo "=========================================="
-              echo "AUTHORIZATION SUCCESS!"
-              echo "=========================================="
-              refresh_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
-              
-              cat > /tmp/make_cred.py << 'PYEOF'
-import json, sys
-cred = {
-  "access_token": sys.argv[1],
-  "refresh_token": sys.argv[2],
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "client_id": sys.argv[3],
-  "client_secret": sys.argv[4],
-  "expiry": "2026-07-12T00:00:00Z"
-}
-print(json.dumps(cred))
-PYEOF
-              
-              credentials_json=$(python3 /tmp/make_cred.py "$access_token" "$refresh_token" "$CLIENT_ID" "$CLIENT_SECRET")
-              
-              cred_base64=$(echo -n "$credentials_json" | base64 -w0)
-              echo "cred_base64=$cred_base64" >> $GITHUB_OUTPUT
-              echo "status=success" >> $GITHUB_OUTPUT
-              
-              echo ""
-              echo "=========================================="
-              echo "CREDENTIALS BASE64:"
-              echo "$cred_base64"
-              echo "=========================================="
-              exit 0
-            fi
-            
-            error=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)
-            if [ "$error" != "authorization_pending" ]; then
-              echo "Error: $error"
-              echo "status=failed" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-          done
-          
-          echo "TIMEOUT - authorization not completed"
-          echo "status=timeout" >> $GITHUB_OUTPUT
-          exit 1
+          echo "Workflow triggered!"
+          echo "CLIENT_ID is ${{ secrets.YOUTUBE_CLIENT_ID }}"
+          echo "CLIENT_ID first 10 chars: ${{ secrets.YOUTUBE_CLIENT_ID }}"
+          python3 -c "print('Python works!')"
+          curl --version | head -1
+          echo "Done!"
