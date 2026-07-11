@@ -1,4 +1,4 @@
-name: YouTube OAuth Test
+name: YouTube OAuth Authorization
 
 on:
   push:
@@ -9,14 +9,107 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  authorize:
     runs-on: ubuntu-latest
+    outputs:
+      cred_base64: ${{ steps.get_token.outputs.cred_base64 }}
     steps:
-      - name: Test
+      - name: Generate device code
+        id: get_code
         run: |
-          echo "Workflow triggered!"
-          echo "CLIENT_ID is ${{ secrets.YOUTUBE_CLIENT_ID }}"
-          echo "CLIENT_ID first 10 chars: ${{ secrets.YOUTUBE_CLIENT_ID }}"
-          python3 -c "print('Python works!')"
-          curl --version | head -1
-          echo "Done!"
+          python3 << 'PYEOF'
+          import urllib.request, urllib.parse, json, os
+          
+          client_id = '${{ secrets.YOUTUBE_CLIENT_ID }}'
+          
+          data = urllib.parse.urlencode({
+            'client_id': client_id,
+            'scope': 'https://www.googleapis.com/auth/youtube.upload'
+          }).encode()
+          
+          req = urllib.request.Request('https://oauth2.googleapis.com/device/code', data=data)
+          resp = urllib.request.urlopen(req, timeout=30)
+          result = json.loads(resp.read())
+          
+          verification_url = result['verification_url']
+          user_code = result['user_code']
+          device_code = result['device_code']
+          
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+            f.write(f'verification_url={verification_url}\n')
+            f.write(f'user_code={user_code}\n')
+            f.write(f'device_code={device_code}\n')
+          
+          print('========================================')
+          print('ACTION REQUIRED - OPEN THIS URL IN BROWSER:')
+          print(verification_url)
+          print('========================================')
+          print('ENTER THIS CODE:', user_code)
+          print('========================================')
+          print('Then come back here - workflow will poll automatically')
+          print('========================================')
+          PYEOF
+
+      - name: Poll for token
+        id: get_token
+        env:
+          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, urllib.parse, json, os, time
+          
+          device_code = '${{ steps.get_code.outputs.device_code }}'
+          client_id = os.environ['CLIENT_ID']
+          client_secret = os.environ['CLIENT_SECRET']
+          
+          for i in range(60):
+            time.sleep(5)
+            
+            data = urllib.parse.urlencode({
+              'client_id': client_id,
+              'client_secret': client_secret,
+              'code': device_code,
+              'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
+            }).encode()
+            
+            req = urllib.request.Request('https://oauth2.googleapis.com/token', data=data)
+            resp = urllib.request.urlopen(req, timeout=30)
+            result = json.loads(resp.read())
+            
+            if 'access_token' in result:
+              access_token = result['access_token']
+              refresh_token = result.get('refresh_token', '')
+              
+              cred = {
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'token_uri': 'https://oauth2.googleapis.com/token',
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'expiry': '2026-07-12T00:00:00Z'
+              }
+              
+              import base64
+              cred_json = json.dumps(cred)
+              cred_base64 = base64.b64encode(cred_json.encode()).decode()
+              
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write(f'cred_base64={cred_base64}\n')
+                f.write('status=success\n')
+              
+              print('========================================')
+              print('AUTHORIZATION SUCCESS!')
+              print('========================================')
+              print('CREDENTIALS_BASE64:', cred_base64)
+              print('========================================')
+              exit(0)
+            
+            error = result.get('error', 'unknown')
+            if error != 'authorization_pending':
+              print(f'Error: {error}')
+              exit(1)
+          
+          print('TIMEOUT - authorization not completed')
+          exit(1)
+          PYEOF
