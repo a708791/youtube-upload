@@ -1,0 +1,73 @@
+name: Upload to YouTube
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install google-api-python-client google-auth-httplib2
+
+      - name: Upload to YouTube
+        env:
+          YOUTUBE_CLIENT_SECRETS: ${{ secrets.YOUTUBE_CLIENT_SECRETS }}
+          VIDEO_FILE: youtube_people_pleasing_final.mp4
+        run: |
+          python << 'EOF'
+          import os
+          import json
+          from google.oauth2.credentials import Credentials
+          from google_auth_oauthlib.flow import InstalledAppFlow
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          import httplib2
+          import os
+
+          SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+          API_SERVICE_NAME = 'youtube'
+          API_VERSION = 'v3'
+
+          # The video file is in the repo root
+          video_file = 'youtube_people_pleasing_final.mp4'
+
+          # Get credentials from secrets or use service account approach
+          # Since we can't do OAuth flow interactively, use a pre-generated token
+          creds_data = os.environ.get('YOUTUBE_CREDENTIALS_JSON', '{}')
+          if creds_data and creds_data != '{}':
+              creds = Credentials.from_authorized_user_info(json.loads(creds_data), SCOPES)
+          else:
+              print("No credentials found in YOUTUBE_CREDENTIALS_JSON secret")
+              print("Please set up OAuth2 credentials in GitHub secrets")
+              exit(1)
+
+          youtube = build(API_SERVICE_NAME, API_VERSION, credentials=creds)
+
+          request = youtube.videos().insert(
+              part='snippet,status',
+              body={
+                  'snippet': {
+                      'title': 'Why You Keep Saying Yes When You Want to Say No - Psychology Tips',
+                      'description': 'In this video, we explore the psychology behind people-pleasing behavior and how to break the cycle.\n\n#Psychology #SelfImprovement #PeoplePleasing',
+                      'tags': ['psychology', 'self improvement', 'people pleasing', 'boundary setting'],
+                      'categoryId': '22'
+                  },
+                  'status': {
+                      'privacyStatus': 'public',
+                      'selfDeclaredMadeForKids': False
+                  }
+              },
+              media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)
+          )
+          response = request.execute()
+          print(f"Uploaded! Video ID: {response.get('id')}")
+          EOF
