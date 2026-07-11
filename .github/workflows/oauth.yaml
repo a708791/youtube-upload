@@ -1,4 +1,4 @@
-name: YouTube OAuth Test v11
+name: YouTube OAuth Authorization
 
 on:
   push:
@@ -15,8 +15,80 @@ jobs:
       CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
       CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Test
+      - name: Generate device code
         run: |
-          echo "CLIENT_ID is set: $CLIENT_ID"
-          echo "CLIENT_SECRET first 5: ${CLIENT_SECRET:0:5}"
-          python3 -c "print('CLIENT_ID from python:', '$CLIENT_ID')"
+          python3 -c "
+import urllib.request, urllib.parse, json, os, time
+
+ci = '$CLIENT_ID'
+cs = '$CLIENT_SECRET'
+
+# Get device code
+data = urllib.parse.urlencode({'client_id': ci, 'scope': 'https://www.googleapis.com/auth/youtube.upload'}).encode()
+req = urllib.request.Request('https://oauth2.googleapis.com/device/code', data=data)
+resp = urllib.request.urlopen(req, timeout=30)
+result = json.loads(resp.read())
+
+dc = result['device_code']
+uc = result['user_code']
+vu = result['verification_url']
+
+print('='*50)
+print('OPEN THIS URL IN YOUR BROWSER:')
+print(vu)
+print('='*50)
+print('ENTER THIS CODE:', uc)
+print('='*50)
+
+# Save to file for next step
+with open('device_info.txt', 'w') as f:
+    f.write(vu + '\n')
+    f.write(uc + '\n')
+    f.write(dc + '\n')
+"
+          echo "device_code_generated"
+
+      - name: Poll for token
+        run: |
+          DEVICE_CODE=$(tail -1 device_info.txt)
+          echo "Polling with device_code: $DEVICE_CODE"
+          
+          for i in $(seq 1 60); do
+            sleep 5
+            
+            RESP=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -d "client_id=$CLIENT_ID&client_secret=$CLIENT_SECRET&code=$DEVICE_CODE&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code")
+            
+            AT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+            
+            if [ -n "$AT" ]; then
+              RT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
+              echo "Got token: $AT"
+              python3 -c "
+import json, base64, os
+cred = {
+  'access_token': '$AT',
+  'refresh_token': '$RT',
+  'token_uri': 'https://oauth2.googleapis.com/token',
+  'client_id': '$CLIENT_ID',
+  'client_secret': '$CLIENT_SECRET',
+  'expiry': '2026-07-12T00:00:00Z'
+}
+cb = base64.b64encode(json.dumps(cred).encode()).decode()
+print('CRED_B64:', cb)
+with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+    f.write('cred_base64=' + cb)
+print('SUCCESS')
+"
+              exit 0
+            fi
+            
+            ERR=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null)
+            if [ "$ERR" != "authorization_pending" ]; then
+              echo "Error: $ERR"
+              exit 1
+            fi
+            echo "Waiting ($i/60)..."
+          done
+          echo "TIMEOUT"
+          exit 1
