@@ -1,4 +1,4 @@
-name: YouTube OAuth Authorization
+name: OAuth v21 - Test raw connectivity
 
 on:
   push:
@@ -11,10 +11,9 @@ on:
 jobs:
   authorize:
     runs-on: ubuntu-latest
-    env:
-      CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-      CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
     steps:
-      - name: Download and run OAuth script
+      - name: Test connectivity
         run: |
-          curl -s https://raw.githubusercontent.com/a708791/youtube-upload/main/oauth_flow.py | python3
+          echo "Testing raw.githubusercontent.com..."
+          curl -v --max-time 30 https://raw.githubusercontent.com 2>&1 | head -30
+          echo "Exit: $?"
