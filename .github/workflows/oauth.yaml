@@ -1,6 +1,11 @@
 name: YouTube OAuth Authorization
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/oauth.yaml'
   workflow_dispatch:
 
 jobs:
@@ -34,7 +39,8 @@ jobs:
           echo "ENTER THIS USER CODE:"
           echo "$user_code"
           echo "=========================================="
-          echo "CLICK ALLOW, THEN COME BACK"
+          echo "CLICK ALLOW"
+          echo "THEN COME BACK - WORKFLOW WILL POLL AUTOMATICALLY"
           echo "=========================================="
 
       - name: Poll for token
@@ -61,7 +67,6 @@ jobs:
               echo "=========================================="
               refresh_token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
               
-              # Write Python script to temp file to avoid escaping issues
               cat > /tmp/make_cred.py << 'PYEOF'
 import json, sys
 cred = {
@@ -97,6 +102,6 @@ PYEOF
             fi
           done
           
-          echo "TIMEOUT"
+          echo "TIMEOUT - authorization not completed"
           echo "status=timeout" >> $GITHUB_OUTPUT
           exit 1
