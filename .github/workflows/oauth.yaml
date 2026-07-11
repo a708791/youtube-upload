@@ -1,0 +1,94 @@
+name: YouTube OAuth Authorization
+
+on:
+  workflow_dispatch:
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.poll.outputs.status }}
+    steps:
+      - name: Generate device code
+        id: device
+        env:
+          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+        run: |
+          response=$(curl -s -X POST https://oauth2.googleapis.com/device/code \
+            -d "client_id=$CLIENT_ID" \
+            -d "scope=https://www.googleapis.com/auth/youtube.upload")
+          
+          echo "Response: $response"
+          
+          device_code=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('device_code',''))")
+          user_code=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user_code',''))")
+          verification_url=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verification_url',''))")
+          interval=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('interval',5))")
+          
+          echo "device_code=$device_code" >> $GITHUB_OUTPUT
+          echo "user_code=$user_code" >> $GITHUB_OUTPUT
+          echo "verification_url=$verification_url" >> $GITHUB_OUTPUT
+          echo "interval=$interval" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "=========================================="
+          echo "PLEASE VISIT THIS URL:"
+          echo "$verification_url"
+          echo "=========================================="
+          echo "ENTER THIS CODE:"
+          echo "$user_code"
+          echo "=========================================="
+
+      - name: Poll for token
+        id: poll
+        env:
+          CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        run: |
+          device_code="${{ steps.device.outputs.device_code }}"
+          interval="${{ steps.device.outputs.interval }}"
+          
+          for i in $(seq 1 120); do
+            sleep $interval
+            
+            response=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -d "client_id=$CLIENT_ID" \
+              -d "client_secret=$CLIENT_SECRET" \
+              -d "code=$device_code" \
+              -d "grant_type=urn:ietf:params:oauth:grant-type:device_code")
+            
+            echo "Poll $i/120..."
+            
+            if echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null | grep -q .; then
+              echo "AUTHORIZATION SUCCESSFUL!"
+              
+              cat > credentials.json << EOF
+              {
+                "access_token": "$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")",
+                "refresh_token": "$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))")",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": "$CLIENT_ID",
+                "client_secret": "$CLIENT_SECRET"
+              }
+              EOF
+              
+              echo "status=success" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            
+            error=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null)
+            if [ "$error" != "authorization_pending" ]; then
+              echo "Error: $error"
+              echo "status=failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          done
+          
+          echo "status=timeout" >> $GITHUB_OUTPUT
+          exit 1
+
+      - name: Set GitHub Secrets
+        if: steps.poll.outputs.status == 'success'
+        run: |
+          gh secret set YOUTUBE_CREDENTIALS_JSON --contents "$(cat credentials.json)"
+          echo "OAuth credentials saved to GitHub Secrets!"
