@@ -1,0 +1,88 @@
+name: YouTube OAuth
+
+on:
+  workflow_dispatch:
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authorize YouTube
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, urllib.parse, json, base64, os, time, sys
+
+          client_id = os.environ['CLIENT_ID']
+          client_secret = os.environ['CLIENT_SECRET']
+
+          # Step 1: Get device code
+          data = urllib.parse.urlencode({
+              'client_id': client_id,
+              'scope': 'https://www.googleapis.com/auth/youtube.upload'
+          }).encode()
+          resp = urllib.request.urlopen('https://oauth2.googleapis.com/device/code', data=data, timeout=60)
+          result = json.loads(resp.read())
+
+          dc = result['device_code']
+          uc = result['user_code']
+          vu = result['verification_url']
+          interval = result.get('interval', 5)
+
+          print('=' * 60)
+          print('OPEN THIS URL: ' + vu)
+          print('ENTER THIS CODE: ' + uc)
+          print('CLICK ALLOW')
+          print('=' * 60)
+          sys.stdout.flush()
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'verification_url={vu}\n')
+              f.write(f'user_code={uc}\n')
+              f.write(f'device_code={dc}\n')
+
+          # Step 2: Poll for authorization
+          for i in range(120):
+              time.sleep(interval)
+              data = urllib.parse.urlencode({
+                  'client_id': client_id,
+                  'client_secret': client_secret,
+                  'code': dc,
+                  'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'
+              }).encode()
+              try:
+                  resp = urllib.request.urlopen('https://oauth2.googleapis.com/token', data=data, timeout=60)
+                  result = json.loads(resp.read())
+              except Exception as e:
+                  print(f'Waiting... ({i+1}/120)')
+                  sys.stdout.flush()
+                  continue
+
+              if 'access_token' in result:
+                  rt = result.get('refresh_token', '')
+                  expiry = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))
+                  cred_b64 = base64.b64encode(json.dumps({
+                      'access_token': result['access_token'],
+                      'refresh_token': rt,
+                      'token_uri': 'https://oauth2.googleapis.com/token',
+                      'client_id': client_id,
+                      'client_secret': client_secret,
+                      'expiry': expiry
+                  }).encode()).decode()
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write(f'cred_base64={cred_b64}\n')
+                  print('AUTHORIZATION SUCCESS!')
+                  exit(0)
+
+              err = result.get('error', 'unknown')
+              if err != 'authorization_pending':
+                  print(f'Error: {err}')
+                  exit(1)
+              print(f'Waiting... ({i+1}/120)')
+              sys.stdout.flush()
+
+          print('TIMEOUT')
+          exit(1)
+          PYEOF
+        env:
+          CLIENT_ID: ${{ vars.YOUTUBE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ vars.YOUTUBE_CLIENT_SECRET }}
