@@ -7,20 +7,23 @@ jobs:
   authorize:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Set credentials
+        run: |
+          echo "CLIENT_ID=${{ vars.YOUTUBE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "CLIENT_SECRET=${{ vars.YOUTUBE_CLIENT_SECRET }}" >> $GITHUB_ENV
+        env:
+          YOUTUBE_CLIENT_ID: ${{ vars.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ vars.YOUTUBE_CLIENT_SECRET }}
 
       - name: Authorize YouTube
-        env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
         run: |
           python3 << 'PYEOF'
           import urllib.request, urllib.parse, json, base64, os, time, sys
 
-          CLIENT_ID = os.environ['YOUTUBE_CLIENT_ID']
-          CLIENT_SECRET = os.environ['YOUTUBE_CLIENT_SECRET']
+          CLIENT_ID = os.environ['CLIENT_ID']
+          CLIENT_SECRET = os.environ['CLIENT_SECRET']
 
+          # Step 1: Get device code
           data = urllib.parse.urlencode({
               'client_id': CLIENT_ID,
               'scope': 'https://www.googleapis.com/auth/youtube.upload'
@@ -35,12 +38,13 @@ jobs:
           interval = result.get('interval', 5)
 
           print('=' * 60)
-          print('OPEN THIS URL IN YOUR BROWSER:')
+          print('STEP 1: OPEN THIS URL:')
           print(vu)
           print('=' * 60)
-          print('ENTER THIS CODE:', uc)
+          print('STEP 2: ENTER THIS CODE:', uc)
           print('=' * 60)
-          print('CLICK ALLOW, THEN WAIT...')
+          print('STEP 3: CLICK ALLOW')
+          print('=' * 60)
           sys.stdout.flush()
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
@@ -48,6 +52,7 @@ jobs:
               f.write(f'user_code={uc}\n')
               f.write(f'device_code={dc}\n')
 
+          # Step 2: Poll
           for i in range(120):
               time.sleep(interval)
               data = urllib.parse.urlencode({
@@ -66,18 +71,16 @@ jobs:
                   continue
 
               if 'access_token' in result:
-                  at = result['access_token']
                   rt = result.get('refresh_token', '')
                   expiry = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() + 3600))
-                  cred = {
-                      'access_token': at,
+                  cred_b64 = base64.b64encode(json.dumps({
+                      'access_token': result['access_token'],
                       'refresh_token': rt,
                       'token_uri': 'https://oauth2.googleapis.com/token',
                       'client_id': CLIENT_ID,
                       'client_secret': CLIENT_SECRET,
                       'expiry': expiry
-                  }
-                  cred_b64 = base64.b64encode(json.dumps(cred).encode()).decode()
+                  }).encode()).decode()
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                       f.write(f'cred_base64={cred_b64}\n')
                       f.write('status=success\n')
